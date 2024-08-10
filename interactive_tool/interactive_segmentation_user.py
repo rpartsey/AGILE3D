@@ -40,7 +40,8 @@ class UserInteractiveSegmentationModel(abc.ABC):
             self.model.eval()
 
         # init other class parameters
-        self.dataloader_test = iter(dataloader_test)
+        self.dataloader_test_iter = iter(dataloader_test)
+        self.dataloader_test = dataloader_test
         self.num_clicks = 0
         self.coords=None
         self.pred=None
@@ -110,11 +111,11 @@ class UserInteractiveSegmentationModel(abc.ABC):
                 print(line)
         
         # update gui and save new object mask
-        self.visualizer.update_colors(colors=self.get_colors(reload_masks=False)) # self.object_mask is already up to date
+        # self.visualizer.update_colors(colors=self.get_colors(reload_masks=False)) # self.object_mask is already up to date
         negative_semantic = self.object_mask[:, 2].copy() * 2 # negative semantic is 2, positive semantic is 1
         object_semantic = self.object_mask[:, 0] + negative_semantic # as these channels are mutually exclusive, we get 0 for uncertain, 1 for positive and 2 for negative
 
-        self.dataloader_test.update_object(self.object_name, object_semantic, num_new_clicks=num_clicks)
+        # self.dataloader_test_iter.update_object(self.object_name, object_semantic, num_new_clicks=num_clicks)
 
     def reset_masks(self):
         self.object_mask = np.zeros([np.shape(self.original_colors)[0], 3]) # mask,pos,neg
@@ -125,8 +126,8 @@ class UserInteractiveSegmentationModel(abc.ABC):
     def get_colors(self, reload_masks=False):
         if reload_masks:
             self.reset_masks()
-            self.grey_mask = self.dataloader_test.get_occupied_points_idx_except_curr(self.object_name)
-            object_semantic = self.dataloader_test.get_object_semantic(self.object_name)
+            self.grey_mask = self.dataloader_test_iter.get_occupied_points_idx_except_curr(self.object_name)
+            object_semantic = self.dataloader_test_iter.get_object_semantic(self.object_name)
             
         colors = self.original_colors.copy()
 
@@ -141,8 +142,8 @@ class UserInteractiveSegmentationModel(abc.ABC):
     
     def check_previous_next_scene(self):
         """returns whether there are previous or next scenes, called by GUI"""
-        num_scenes = len(self.dataloader_test)
-        curr_scene_idx = self.dataloader_test.get_curr_scene_id()
+        num_scenes = len(self.dataloader_test_iter)
+        curr_scene_idx = self.dataloader_test_iter.get_curr_scene_id()
         previous = curr_scene_idx > 0
         nxt = curr_scene_idx < num_scenes-1
         return previous, nxt, curr_scene_idx
@@ -151,13 +152,12 @@ class UserInteractiveSegmentationModel(abc.ABC):
         self.cube_size = slider_value
     
     def run_segmentation(self): # Overrides standard run
-        self.scene_name, self.scene_point_type, self.points, labels_full_ori, record_file, mask_folder, click_folder, objects = self.dataloader_test.get_curr_scene()
+        self.scene_name, self.scene_point_type, self.points, labels_full_ori, record_file, mask_folder, click_folder, objects = self.dataloader_test_iter.get_curr_scene()
 
         self.record_file = record_file
         self.mask_folder  = mask_folder
         self.click_folder = click_folder
 
-        
         colors_full = np.asarray(self.points.vertex_colors if self.scene_point_type == "mesh" else self.points.colors).copy()
         coords_full = np.array(self.points.points if self.scene_point_type == "pointcloud" else self.points.vertices)
         
@@ -196,16 +196,16 @@ class UserInteractiveSegmentationModel(abc.ABC):
         self.pcd_features, self.aux, self.coordinates, self.pos_encodings_pcd = self.model.forward_backbone(data, raw_coordinates=self.raw_coords_qv)
 
         ### show UI
-        self.visualizer = InteractiveSegmentationGUI(self)
+        # self.visualizer = InteractiveSegmentationGUI(self)
         if len(objects) != 0: # init current object to the first one if there are already objects in the data set
             self.object_name = objects[0]
             colors = self.get_colors(reload_masks=True)
         else:
             colors = self.get_colors()
-        self.visualizer.run(scene_name = self.scene_name, point_object = self.points, coords = self.coords, 
-                            coords_qv = self.raw_coords_qv, colors = colors, original_colors = self.original_colors, 
-                            original_labels = self.labels_full_ori, original_labels_qv = self.labels_qv_ori,
-                            is_point_cloud=self.scene_point_type=="pointcloud", object_names=objects)
+        # self.visualizer.run(scene_name = self.scene_name, point_object = self.points, coords = self.coords, 
+        #                     coords_qv = self.raw_coords_qv, colors = colors, original_colors = self.original_colors, 
+        #                     original_labels = self.labels_full_ori, original_labels_qv = self.labels_qv_ori,
+        #                     is_point_cloud=self.scene_point_type=="pointcloud", object_names=objects)
 
     def load_next_scene(self, quit = False, previous=False):
         self.num_clicks = 0
@@ -215,11 +215,11 @@ class UserInteractiveSegmentationModel(abc.ABC):
         prev, nxt, curr_scene_idx = self.check_previous_next_scene()
         if not previous and nxt:
             # load next scene
-            self.scene_name, self.scene_point_type, self.points, labels_full_ori, record_file, mask_folder, click_folder, objects = next(self.dataloader_test)
+            self.scene_name, self.scene_point_type, self.points, labels_full_ori, record_file, mask_folder, click_folder, objects = next(self.dataloader_test_iter)
             self.reset_masks()
         elif previous and prev:
             # load previous scene
-            self.scene_name, self.scene_point_type, self.points, labels_full_ori, record_file, mask_folder, click_folder, objects = self.dataloader_test.load_scene(curr_scene_idx-1)
+            self.scene_name, self.scene_point_type, self.points, labels_full_ori, record_file, mask_folder, click_folder, objects = self.dataloader_test_iter.load_scene(curr_scene_idx-1)
             self.reset_masks()
         else: 
             return
@@ -273,15 +273,74 @@ class UserInteractiveSegmentationModel(abc.ABC):
             self.object_name = None
             self.reset_masks()
             colors = self.get_colors()
-        self.visualizer.set_new_scene(scene_name = self.scene_name, point_object = self.points, coords = self.coords, 
-                                      coords_qv = self.raw_coords_qv, colors = colors, original_colors = self.original_colors, 
-                                      original_labels = self.labels_full_ori, original_labels_qv = self.labels_qv_ori, 
-                                      is_point_cloud=self.scene_point_type=="pointcloud", object_names=objects)
+        # self.visualizer.set_new_scene(scene_name = self.scene_name, point_object = self.points, coords = self.coords, 
+        #                               coords_qv = self.raw_coords_qv, colors = colors, original_colors = self.original_colors, 
+        #                               original_labels = self.labels_full_ori, original_labels_qv = self.labels_qv_ori, 
+        #                               is_point_cloud=self.scene_point_type=="pointcloud", object_names=objects)
         return
+    
+    def load_scene(self, scene_idx):
+        self.num_clicks = 0
+        self.scene_name, self.scene_point_type, self.points, labels_full_ori, record_file, mask_folder, click_folder, objects = self.dataloader_test.load_scene(scene_idx)
+        self.record_file = record_file
+        self.mask_folder  = mask_folder
+        self.click_folder = click_folder
+        
+        colors_full = np.asarray(self.points.vertex_colors if self.scene_point_type == "mesh" else self.points.colors).copy()
+        coords_full = np.array(self.points.points if self.scene_point_type == "pointcloud" else self.points.vertices)
+        
+        self.original_colors = colors_full
+        self.coords = coords_full
+        
+        self.reset_masks()
+
+        ### quantization
+        coords_qv, unique_map, inverse_map = ME.utils.sparse_quantize(
+                coordinates=self.coords,
+                quantization_size=self.quantization_size,
+                return_index=True,
+                return_inverse=True)
+        
+        self.coords_qv = coords_qv
+        self.colors_qv = torch.from_numpy(colors_full[unique_map]).float()
+
+
+        if labels_full_ori is not None:
+            self.labels_full_ori = torch.from_numpy(labels_full_ori).float().to(self.device)
+            self.labels_qv_ori = self.labels_full_ori[unique_map]
+        else:
+            self.labels_full_ori = None
+            self.labels_qv_ori  = None
+
+        self.inverse_map = inverse_map.to(self.device)
+        self.raw_coords_qv = torch.from_numpy(coords_full[unique_map]).float().to(self.device)
+        
+        ### compute backbone features
+        data = ME.SparseTensor(
+                            coordinates=ME.utils.batched_coordinates([self.coords_qv]),
+                            features=self.colors_qv,
+                            device=self.device
+                            )
+        self.pcd_features, self.aux, self.coordinates, self.pos_encodings_pcd = self.model.forward_backbone(data, raw_coordinates=self.raw_coords_qv)
+
+        if len(objects) != 0:
+            self.object_name = objects[0]
+            colors = self.get_colors(reload_masks=True)
+
+        else:
+            self.object_name = None
+            self.reset_masks()
+            colors = self.get_colors()
+        # self.visualizer.set_new_scene(scene_name = self.scene_name, point_object = self.points, coords = self.coords,
+        #                               coords_qv = self.raw_coords_qv, colors = colors, original_colors = self.original_colors,
+        #                               original_labels = self.labels_full_ori, original_labels_qv = self.labels_qv_ori,
+        #                               is_point_cloud=self.scene_point_type=="pointcloud", object_names=objects)
+        return self.scene_name, self.scene_point_type, self.points, labels_full_ori, record_file, mask_folder, click_folder, objects
+    
     
     def load_object(self, object_name, load_colors=True):
         """Is called by GUI to either load an existing object or to create a new object"""
         self.object_name = object_name
-        self.dataloader_test.add_object(object_name) # does nothing if object already exists
+        self.dataloader_test_iter.add_object(object_name) # does nothing if object already exists
         colors = self.get_colors(reload_masks=True) if load_colors else None
-        self.visualizer.select_object(colors=colors)
+        # self.visualizer.select_object(colors=colors)
